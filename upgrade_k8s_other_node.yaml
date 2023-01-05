@@ -1,0 +1,52 @@
+---
+# https://v1-20.docs.kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/
+- name: "Upgrade k8s"
+  hosts: qserv_all:!k8s_upgrade_master
+  serial: 1
+  gather_facts: true
+  tasks:
+    - name: "Disable puppet"
+      ansible.builtin.file:
+        path: /etc/nopuppet
+        state: touch
+      become: true
+    - name: "Upgrade kubeadm package"
+      ansible.builtin.yum:
+        name: "kubeadm-{{k8s_version}}-0"
+        state: present
+      become: true
+    - name: "Upgrade cluster using kubeadm"
+      ansible.builtin.shell:
+        cmd: "kubeadm upgrade node {{kubeadm_upgrade_extra_args | default('')}}"
+      become: true
+    - name: "Enable puppet"
+      ansible.builtin.file:
+        path: /etc/nopuppet
+        state: absent
+      become: true
+    - name: "Drain the node: Prepare the node for maintenance by marking it unschedulable and evicting the workloads"
+      ansible.builtin.shell:
+        cmd: "kubectl drain {{ extra_k8s_drain_arg | default('') }} {{ inventory_hostname }} --ignore-daemonsets"
+      become: true
+      delegate_to: "{% if (delegate_to_master | default(true)) %}{{ groups['qserv_k8s'][0] }}{% else %}{{ inventory_hostname }}{% endif %}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+    - name: "Upgrade kubelet and kubectl"
+      ansible.builtin.yum:
+        name:
+          - "kubelet-{{ k8s_version }}-0"
+          - "kubectl-{{ k8s_version }}-0"
+      become: true
+    - name: "Restart the kubelet"
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+        daemon_reload: yes
+      become: true
+    - name: "Uncordon the node: Bring the node back online by marking it schedulable"
+      ansible.builtin.shell:
+        cmd: "kubectl uncordon {{ inventory_hostname }}"
+      become: true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      delegate_to: "{% if (delegate_to_master | default(true)) %}{{ groups['qserv_k8s'][0] }}{% else %}{{ inventory_hostname }}{% endif %}"

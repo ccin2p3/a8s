@@ -1,0 +1,78 @@
+---
+# https://v1-20.docs.kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/
+- name: "Upgrade k8s"
+  hosts: k8s_upgrade_master
+  serial: 1
+  run_once: true
+  gather_facts: true
+  tasks:
+    - name: "Backup etcd"
+      ansible.builtin.shell:
+        cmd: "/usr/local/bin/etcdctl --endpoints https://{{ etcd_listen_address | default(ansible_default_ipv4.address) }}:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key snapshot save /var/lib/etcd-snapshot-$(date +%s).db"
+      become: true
+      environment:
+        ETCDCTL_API: 3
+    - name: "Disable puppet"
+      ansible.builtin.file:
+        path: /etc/nopuppet
+        state: touch
+      become: true
+    - name: "Upgrade kubeadm package"
+      ansible.builtin.yum:
+        name: "kubeadm-{{k8s_version}}-0"
+        state: present
+      become: true
+    - name: "Launch kubeadm upgrade plan now"
+      ansible.builtin.shell:
+        cmd: "kubeadm upgrade plan {{kubeadm_upgrade_extra_args | default('')}}"
+      register: kubeadm_upgrade_plan
+      changed_when: false
+      become: true
+    - name: "Display kubeadm upgrade plan"
+      debug:
+        var: kubeadm_upgrade_plan.stdout_lines
+      changed_when: false
+    - name: "Validate kubeadm upgrade plan now"
+      pause:
+        prompt: "Read output of 'kubeadm upgrade plan'… and continue if ok"
+      changed_when: false
+    - name: "Upgrade cluster using kubeadm"
+      ansible.builtin.shell:
+        cmd: "kubeadm upgrade apply -y {{k8s_version}} {{kubeadm_upgrade_extra_args | default('')}}"
+      become: true
+    - name: "Enable puppet"
+      ansible.builtin.file:
+        path: /etc/nopuppet
+        state: absent
+      become: true
+    # TODO 
+    # currently we don't care as this hasn't been updated since 1.16
+    # - name: "Manually upgrade CNI provider plugin (weave): Run puppet"
+    # community.general.puppet: ~
+    # become: true
+    # maybe check output of `kubectl get ds/weave-net --namespace kube-system -o yaml`
+    # - name: "Make sure correct version of CNI plugin was installed"
+    - name: "Drain the node: Prepare the node for maintenance by marking it unschedulable and evicting the workloads"
+      ansible.builtin.shell:
+        cmd: "kubectl drain {{ extra_k8s_drain_arg | default('') }} {{ inventory_hostname }} --ignore-daemonsets"
+      become: true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+    - name: "Upgrade kubelet and kubectl"
+      ansible.builtin.yum:
+        name:
+          - "kubelet-{{ k8s_version }}-0"
+          - "kubectl-{{ k8s_version }}-0"
+      become: true
+    - name: "Restart the kubelet"
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+        daemon_reload: yes
+      become: true
+    - name: "Uncordon the node: Bring the node back online by marking it schedulable"
+      ansible.builtin.shell:
+        cmd: "kubectl uncordon {{ inventory_hostname }}"
+      become: true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf

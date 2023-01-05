@@ -1,0 +1,29 @@
+k8s_all:
+  children:
+    app_masters:
+      hosts:
+        app[201:202].example.com:
+      vars:
+        extra_k8s_drain_arg: "--delete-emptydir-data"
+    app_workers:
+      hosts:
+        app[203:217].example.com:
+      vars:
+        extra_k8s_drain_arg: "--delete-emptydir-data"
+    app:
+      hosts:
+        app[218:222].example.com:
+      vars:
+        extra_k8s_drain_arg: "--force --delete-local-data"
+    app_k8s:
+      hosts:
+        app[223:225].example.com:
+      vars:
+        delegate_to_master: false
+    k8s_upgrade_master:
+      hosts:
+        app123.example.com:
+      vars:
+        etcd_listen_address: 192.168.234.234
+  vars:
+    k8s_version: 1.24.9
